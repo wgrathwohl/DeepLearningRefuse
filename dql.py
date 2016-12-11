@@ -1,5 +1,5 @@
 """
-Generic Implementation of deep determanistic policy gradient
+Generic Implementation of deep q learning
 http://arxiv.org/pdf/1509.02971v5.pdf
 """
 

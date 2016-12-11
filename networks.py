@@ -1,5 +1,5 @@
 """
-Will house networks for adversarial autoencoders
+Will house networks
 """
 import tensorflow as tf
 from layers import *

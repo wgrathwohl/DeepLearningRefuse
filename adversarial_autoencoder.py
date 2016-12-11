@@ -1,5 +1,5 @@
 """
-Trains a convolutional adversarial autoencoder
+Trains a convolutional adversarial autoencoder (https://arxiv.org/pdf/1511.05644v2.pdf)
 """
 from __future__ import absolute_import
 from __future__ import division

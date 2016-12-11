@@ -1,5 +1,5 @@
 """
-Will train a simple convolutional autoencoder using l2 loss
+Tests an adversarial model by training on the cifar10 dataset
 """
 from __future__ import absolute_import
 from __future__ import division

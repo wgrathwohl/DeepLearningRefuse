@@ -1,5 +1,5 @@
 """
-Implementation of Convolutional GRU
+Implementation of Convolutional GRU and trains an autoencoder to use it
 """
 from tensorflow.python.platform import gfile
 import tensorflow as tf

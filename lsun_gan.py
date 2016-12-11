@@ -1,5 +1,5 @@
 """
-Will train a simple convolutional autoencoder using l2 loss
+Implementation of DCGAN (https://arxiv.org/abs/1511.06434)
 """
 from __future__ import absolute_import
 from __future__ import division
