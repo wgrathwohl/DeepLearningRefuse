@@ -110,12 +110,13 @@ def Ex_log_q(mu, log_sigma_sqr):
 
     returns integral(log(q(x))q(x)dx)
     """
-    batch_size, n_frames, N = mu.get_shape().as_list()
-    c1 = -.5 * N * np.log(2. * np.pi)
-    c2 = -.5 * tf.reduce_sum(1. + log_sigma_sqr, reduction_indices=[2])
 
-    per_frame_entropy = c1 + c2
-    return tf.reduce_sum(per_frame_entropy)
+    batch_size, N, F = mu.get_shape().as_list()
+    c1 = -.5 * N * F * np.log(2. * np.pi)
+    c2 = -.5 * tf.reduce_sum(1. + log_sigma_sqr, reduction_indices=[1, 2])
+
+    sequence_entropy = c1 +  c2
+    return tf.reduce_sum(sequence_entropy)
 
 def Ex_log_p_s(mu, log_sigma_sqr, sigma_s_sqr, eps=1e-10):
     """
@@ -124,32 +125,32 @@ def Ex_log_p_s(mu, log_sigma_sqr, sigma_s_sqr, eps=1e-10):
 
     returns integral(log(p(x))q(x)dx)
     """
-    batch_size, N, n_features = mu.get_shape().as_list()
-    c1 = -.5 * (N - 1.) * np.log(2. * np.pi * sigma_s_sqr)
-    c2 = -.5 * np.log(2. * np.pi * (sigma_s_sqr + N))
+    batch_size, N, F = mu.get_shape().as_list()
 
-    sum_mu_sqr_plus_sigma_sqr = tf.reduce_sum(
-        tf.square(mu) + tf.exp(log_sigma_sqr + eps),
-        reduction_indices=[1]
-    )
-    Ex_x_sqr_hat = sum_mu_sqr_plus_sigma_sqr / N
+    ex_h_sqr_hat = tf.reduce_mean(tf.square(mu) + tf.exp(log_sigma_sqr), reduction_indices=[1])
 
     mean_sum = 0.
-    for i in range(N - 1):
+    for i in range(N-1):
         mu_i = mu[:, i, :]
         mu_i_plus_1 = mu[:, i+1:, :]
         sum_mu_i_plus_1 = tf.reduce_sum(mu_i_plus_1, reduction_indices=[1])
         prod = mu_i * sum_mu_i_plus_1
         mean_sum = mean_sum + prod
 
-    Ex_sum_x_sqr = sum_mu_sqr_plus_sigma_sqr + 2. * mean_sum
-    Ex_x_hat_sqr = Ex_sum_x_sqr / (N**2)
+    ex_h_hat_sqr = (ex_h_sqr_hat / N) + (2. / (N**2)) * mean_sum
 
-    integral_term = (Ex_x_sqr_hat - Ex_x_hat_sqr) / (sigma_s_sqr / N) + Ex_x_hat_sqr / (sigma_s_sqr / N + 1)
+    v0 = -1. * N / (2. * sigma_s_sqr) * tf.reduce_sum(ex_h_sqr_hat, reduction_indices=[1])
+    v1 = -1. * N * ((1. / (2. * (sigma_s_sqr + N))) - (1. / (2. * sigma_s_sqr))) * tf.reduce_sum(
+        ex_h_hat_sqr, reduction_indices=[1]
+    )
 
-    out = c1 + c2 - .5 * integral_term
+    c1 = -.5 * (N - 1) * np.log(2. * np.pi)
+    c2 = .5 * (np.log(sigma_s_sqr) - np.log(N)) - .5 * N * np.log(sigma_s_sqr)
+    c3 = -.5 * np.log(2. * np.pi * (sigma_s_sqr + 1))
+    logC = c1 + c2 + c3
 
-    return tf.reduce_sum(out)
+    return tf.reduce_sum(v0 + v1 + F * logC)
+
 
 def D_kl_s(mu, log_sigma_sqr, sigma_s_sqr):
     e_log_q = Ex_log_q(mu, log_sigma_sqr)
@@ -164,103 +165,30 @@ def D_kl_t(mu, log_sigma_sqr, sigma_t_sqr, eps=1e-10):
 
     returns integral(log(p(x)) - log(q(x))q(x)dx)
     """
-    mu_0 = tf.expand_dims(mu[:, 0, :], 1)
+    batch_size, N, F = mu.get_shape().as_list()
+
+    mu_0 = mu[:, 0, :]
     mu_delta = mu[:, 1:, :] - mu[:, :-1, :]
-    sigma_sqr_0 = tf.expand_dims(tf.exp(log_sigma_sqr[:, 0, :]), 1)
+    sigma_sqr_0 = tf.exp(log_sigma_sqr[:, 0, :])
     sigma_sqr_delta = tf.exp(log_sigma_sqr[:, 1:, :]) + tf.exp(log_sigma_sqr[:, :-1, :])
 
+    c0 = -.5 * F * np.log(2. * np.pi)
+    c1 = -.5 * (N - 1) * F * np.log(2. * np.pi * sigma_t_sqr)
+    v0 = -.5 * tf.reduce_sum(tf.square(mu_0) + sigma_sqr_0, reduction_indices=[1])
+    v_mu = - 1. / (2. * sigma_t_sqr) * tf.reduce_sum(
+        tf.square(mu_delta),
+        reduction_indices=[1, 2]
+    )
+    v_sigma = - 1. / (2. * sigma_t_sqr) * tf.reduce_sum(sigma_sqr_delta, reduction_indices=[1, 2])
 
-    mu_q = tf.concat(1, [mu_0, mu_delta])
-    sigma_sqr_q = tf.concat(1, [sigma_sqr_0, sigma_sqr_delta])
+    e_log_p = tf.reduce_sum(c0 + v0 + c1 + v_mu + v_sigma)
+    e_log_q = Ex_log_q(mu, log_sigma_sqr)
 
-    mu_p = tf.zeros_like(mu_q)
-    sigma_sqr_p_0 = tf.ones_like(sigma_sqr_0)
-    sigma_sqr_p_rest = sigma_t_sqr * tf.ones_like(sigma_sqr_delta)
-    sigma_sqr_p = tf.concat(1, [sigma_sqr_p_0, sigma_sqr_p_rest])
-
-    c1 = .5 * (tf.log(sigma_sqr_p + eps) - tf.log(sigma_sqr_q + eps))
-    c2 = (sigma_sqr_q + tf.square(mu_q - mu_p)) / (2. * sigma_sqr_p)
-    neg_D_kl = c1 + c2 - .5
-    D_kl = 1. * neg_D_kl
-
-    return tf.reduce_sum(D_kl)
+    return e_log_q - e_log_p
 
 
 
 
-
-
-
-# def log_normal(x, mu, log_sigma_sqr, eps=1e-10):
-#     """
-#     x: tensor [batch_size, n_frames, n_features]
-#     mu: tensor [batch_size, n_frames, n_features]
-#     sigma_sqr: tensor [batch_size, n_frames, n_features]
-
-#     Returns a tensor [batch_size, n_features, n_frames] where each element v_i is equal to:
-#         v_i = log(Normal(x_i | mu_i, sigma_sqr_i))
-#     i.e the log probability of observing x under normal distribution with mean mu and covariance
-#         diag(sigma_sqr)
-#     """
-#     exp = -1. * (tf.square(x - mu) / (2. * tf.exp(log_sigma_sqr) + eps))
-#     const = -.5 * (np.log(2. * np.pi) + log_sigma_sqr)
-#     return const + exp
-
-
-# def log_t_dist(x, sigma_t_sqr, sigma_t0_sqr):
-#     """
-#     x: tensor [batch_size, n_frames, n_features]
-#     log_sigma_t_sqr: float
-#     log_sigma_t0_sqr: float
-
-#     Returns the log probability of observing x under the temporal feature generation process
-#         parameterized with sigma_t_sqr and sigma_t0_sqr. Shape [batch_size, n_features]
-#     """
-#     # Get first example
-#     x0 = tf.expand_dims(x[:, 0, :], 1)
-#     # This example is sampled from the initial state distribution N(0, sigma_t0_sqr)
-#     px0 = log_normal(x0, tf.zeros_like(x0), np.log(sigma_t0_sqr) * tf.ones_like(x0))
-
-#     # Compute temporal feature differences
-#     xd = x[:, 1:, :] - x[:, :-1, :]
-#     # The differences should be normally distributed with N(0, sigma_t_sqr)
-#     pxd = tf.reduce_sum(
-#         log_normal(xd, tf.zeros_like(xd), np.log(sigma_t_sqr) * tf.ones_like(xd)),
-#         reduction_indices=[1]
-#     )
-
-#     return px0 + pxd
-
-
-# def log_s_dist(x, mu0, sigma_s_sqr, sigma_s0_sqr):
-#     """
-#     x: tensor [batch_size, n_frames, n_features]
-#     mu0: float
-#     log_sigma_s_sqr: float
-#     log_sigma_s0_sqr: float
-
-#     Returns the log probability of observing x under the static feature generation process
-#         parameterized with sigma_s_sqr and sigma_s0_sqr. Shape [n_features]
-
-#     Distribution takes the form P(x) = C1 * C2 * Exp1 * Exp2 so log has the form:
-#         c1 + c2 + exp1 + exp2
-#     """
-#     # Get num_frames
-#     N = x.get_shape().as_list()[1]
-
-#     c1 = -.5 * (N - 1.) * np.log(2. * np.pi * sigma_s_sqr)
-#     c2 = -.5 * np.log(2. * np.pi * (sigma_s_sqr +  N * sigma_s0_sqr))
-
-#     # Rest of distribution is in terms of mean(x) and mean(x^2)
-#     x_hat = tf.reduce_mean(x, reduction_indices=[1], keep_dims=True)
-#     # Squared mean
-#     x_hat_sqr = tf.square(x_hat)
-#     x_sqr_hat = tf.reduce_mean(tf.square(x), reduction_indices=[1], keep_dims=True)
-
-#     exp1 = -.5 * (x_sqr_hat - x_hat_sqr) / (sigma_s_sqr / N)
-#     exp2 = -.5 * tf.square(x_hat - mu0 * tf.ones_like(x_hat)) / (sigma_s_sqr / N + sigma_s0_sqr)
-
-#     return c1 + c2 + exp1 + exp2
 
 def bernouli_neg_log_likelihood(x, mu):
     """
